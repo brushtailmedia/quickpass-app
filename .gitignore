@@ -8,14 +8,7 @@ dist/
 # Tauri / Rust build artifacts
 src-tauri/target/
 src-tauri/bundle/
-src-tauri/gen/
-
-# Installer artifacts (extra safety, even though these are under target/)
-*.dmg
-*.msi
-*.deb
-*.AppImage
-*.rpm
+src-tauri/gen/schemas/
 
 # Logs
 *.log

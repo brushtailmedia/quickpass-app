@@ -1,15 +1,21 @@
 [package]
 name = "quickpass_tauri"
 version = "1.0.0"
-description = "QuickPass desktop app"
+description = "QuickPass app"
 authors = ["QuickPass"]
 edition = "2021"
+
+# Mobile targets need a library crate; desktop keeps the binary entry point.
+[lib]
+name = "quickpass_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
 
 [features]
 default = ["custom-protocol"]

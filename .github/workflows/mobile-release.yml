@@ -1,0 +1,254 @@
+name: Mobile Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-release:
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: 27.0.12077973
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node from .nvmrc
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: platform-tools ndk;${{ env.NDK_VERSION }}
+
+      - name: Export NDK_HOME
+        run: echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.8.1
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm run test:all
+
+      - name: Write Android keystore from secrets
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ] || [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ] || [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
+            echo "::warning::Android signing secrets missing (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD). Skipping Android release build."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > src-tauri/gen/android/release.keystore
+          {
+            echo "storeFile=release.keystore"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > src-tauri/gen/android/keystore.properties
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed Android APK and AAB
+        if: steps.keystore.outputs.ok == 'true'
+        # versionCode must increase on every Play upload; the workflow run number is monotonic.
+        run: npm run android:build -- --config '{"bundle":{"android":{"versionCode":${{ github.run_number }}}}}'
+
+      - name: Rename Android outputs
+        if: steps.keystore.outputs.ok == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p release-mobile
+          mv src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk "release-mobile/QuickPass_${GITHUB_REF_NAME}_android.apk"
+          mv src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab "release-mobile/QuickPass_${GITHUB_REF_NAME}_android.aab"
+
+      - name: Upload Android artifact
+        if: steps.keystore.outputs.ok == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quickpass-tauri-android
+          path: release-mobile/*
+          if-no-files-found: error
+
+  ios-release:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node from .nvmrc
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.8.1
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm run test:all
+
+      - name: Import iOS distribution certificate and provisioning profile
+        id: signing
+        env:
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${IOS_CERTIFICATE:-}" ] || [ -z "${IOS_CERTIFICATE_PASSWORD:-}" ] || [ -z "${IOS_PROVISIONING_PROFILE:-}" ] || [ -z "${KEYCHAIN_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "::warning::iOS signing secrets missing (IOS_CERTIFICATE, IOS_CERTIFICATE_PASSWORD, IOS_PROVISIONING_PROFILE, KEYCHAIN_PASSWORD, APPLE_TEAM_ID). Skipping iOS release build."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CERT_PATH="$RUNNER_TEMP/ios-certificate.p12"
+          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/ios-build.keychain-db"
+
+          echo "$IOS_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          echo "$IOS_PROVISIONING_PROFILE" | base64 --decode > "$PROFILE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+          PROFILE_UUID="$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw -)"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed iOS IPA
+        if: steps.signing.outputs.ok == 'true'
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        # CFBundleVersion must be unique per App Store Connect upload of the same version.
+        # bundle.iOS.bundleVersion sets it outright; --build-number would append a fourth component.
+        run: npm run ios:build -- --export-method app-store-connect --config '{"bundle":{"iOS":{"bundleVersion":"${{ github.run_number }}"}}}'
+
+      - name: Rename iOS output
+        if: steps.signing.outputs.ok == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p release-mobile
+          mv src-tauri/gen/apple/build/arm64/QuickPass.ipa "release-mobile/QuickPass_${GITHUB_REF_NAME}_ios.ipa"
+
+      - name: Upload iOS artifact
+        if: steps.signing.outputs.ok == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quickpass-tauri-ios
+          path: release-mobile/*
+          if-no-files-found: error
+
+  publish-release:
+    needs: [android-release, ios-release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: release-artifacts
+
+      - name: List release artifacts
+        run: find release-artifacts -type f | sort
+
+      - name: Collect final release assets
+        id: collect_assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ASSET_LIST_FILE="$(mktemp)"
+          find release-artifacts -type f \
+            \( -name '*.apk' -o -name '*.aab' -o -name '*.ipa' \) \
+            | sort > "$ASSET_LIST_FILE"
+
+          if [ ! -s "$ASSET_LIST_FILE" ]; then
+            echo "::error::No distributable assets found in release-artifacts"
+            exit 1
+          fi
+
+          DUPES="$(awk -F/ '{print $NF}' "$ASSET_LIST_FILE" | sort | uniq -d)"
+          if [ -n "$DUPES" ]; then
+            echo "::error::Duplicate asset filenames detected (would overwrite on release upload):"
+            printf '%s\n' "$DUPES" | sed 's/^/  - /'
+            exit 1
+          fi
+
+          {
+            echo "files<<EOF"
+            cat "$ASSET_LIST_FILE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Assets selected for release:"
+          sed 's/^/  - /' "$ASSET_LIST_FILE"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.3.3
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          overwrite_files: false
+          fail_on_unmatched_files: true
+          files: ${{ steps.collect_assets.outputs.files }}

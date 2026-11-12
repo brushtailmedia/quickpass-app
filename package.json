@@ -1,5 +1,5 @@
 {
-  "name": "quickpass-desktop",
+  "name": "quickpass-app",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -16,15 +16,21 @@
     "test:all": "npm run test && npm run test:vectors",
     "test:vectors": "node ./scripts/vectors.test.mjs",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build",
+    "ios:dev": "tauri ios dev",
+    "ios:build": "tauri ios build",
+    "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-clipboard-manager": "^2.5.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tauri-apps/cli": "2.1.0",
+    "@tauri-apps/cli": "^2.12.4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
