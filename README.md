@@ -2,8 +2,6 @@
 
 A standalone, offline password generator for **Android and iOS**, built with **Tauri + React**.
 
-This repository is a fork of [brushtailmedia/quickpass-desktop](https://github.com/brushtailmedia/quickpass-desktop) retargeted to mobile. The password core and deterministic output are identical. Desktop builds for macOS, Windows, and Linux come from the desktop repository.
-
 QuickPass is deterministic: the same master password + site name + settings always produce the same output. Nothing is stored in a database or sent to a backend.
 The password is derived on the fly using BLAKE2S and SHA-256.
 
@@ -13,7 +11,7 @@ Download pre-built binaries from [Releases](https://github.com/brushtailmedia/qu
 
 <img src="docs/images/quickpass-app-ios.png" alt="QuickPass on iPhone with a generated password copied and the clear-clipboard reminder showing" width="320">
 
-## What It Does
+## What It Is
 
 QuickPass originally started as a Python Tkinter desktop app which I have used privately for many years now. QuickPass App is the Android/iOS edition. The desktop edition lives at [brushtailmedia/quickpass-desktop](https://github.com/brushtailmedia/quickpass-desktop), and a standalone single HTML file version at [brushtailmedia/quickpass-standalone](https://github.com/brushtailmedia/quickpass-standalone).
 
